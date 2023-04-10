@@ -16,6 +16,35 @@ gy = 'гу'
 jy = 'жу'
 nd = 'н/о'
 
+
+from revChatGPT.V1 import Chatbot
+
+def define_sector_by_chatGPT(patent_text):
+    chatbot = Chatbot(config={
+        "email": "cucumento2@gmail.com",
+        "password": "Nebraska77778888__"
+    })
+    for data in chatbot.ask(
+            f"""{rik} - рецептуростроение и компунды
+                {tiv} - трубы и волокна
+                {gy} - гибкая упаковка
+                {jy} - жёсткая упаковка
+                {nd} - не определено, другая тема
+                
+                Есть 4 темы + отдельная 'неопределено'. 
+                Ниже представлен текст патента. Определи к какой теме относится тема данного патента. Ответь только буквами (rik, tiv, gy, jy, no). и только. Больше ничего отвечать не нужно.
+                Ещё раз: только несколько букв, которые маркируют тему, не более.
+                
+                Текст:
+                
+                {patent_text}""",
+        conversation_id="80c17a80-cc42-4d18-8ba9-81a4cb082d1d"
+    ):
+        message = data["message"][len(prev_text) :]
+        prev_text = data["message"]
+    return message
+
+
 # Обработка текста
 def process_text(text):
     # Загрузка стоп-слов и настройка токенизации
@@ -59,23 +88,52 @@ def count_words(df):
         word_counts.append(sorted_word_count)
     return word_counts
 
-def write_df_to_xlsx(df, filename='united_patents.xlsx'):
+
+def write_to_excel(df, filename="patents.xlsx"):
+    # Создаем writer и engine
     writer = pd.ExcelWriter(filename, engine='xlsxwriter')
 
+    # Записываем df в excel
     df.to_excel(writer, sheet_name='Sheet1', index=False)
     workbook = writer.book
     worksheet = writer.sheets['Sheet1']
+
+    # Форматирование заголовка
     header_format = workbook.add_format({
         'bold': True,
-        'text_wrap': True,
+        'align': 'center',
+        'valign': 'vcenter',
+        'bg_color': '#C6E0B4',
+        'font_color': '#006100',
+        'border': 1
+    })
+
+    # Применяем форматирование заголовка
+    for col_num, value in enumerate(df.columns.values):
+        worksheet.write(0, col_num, value, header_format)
+        worksheet.set_column(col_num, col_num, 70)
+
+
+    # Форматирование клеток с данными
+    cell_format = workbook.add_format({
         'valign': 'top',
         'align': 'left',
-        'fg_color': '#C7E4F3',
-        'border': 1})
-    for i, col in enumerate(df.columns):
-        worksheet.write(0, i, col, header_format)
-    worksheet.set_column(0, len(df.columns), 60)
-    worksheet.set_default_row(100)
+        'text_wrap': True,
+        'border': 1
+    })
+
+    # Применяем форматирование клеток с данными
+    for row_num in range(1, len(df) + 1):
+        for col_num, value in enumerate(df.iloc[row_num - 1]):
+            worksheet.write(row_num, col_num, str(value), cell_format)
+            worksheet.set_column(col_num, col_num, 80)
+            worksheet.set_row(row_num, 150)
+
+    last_row = len(df.index)
+    last_col = len(df.columns) - 1
+    worksheet.autofilter(0, 0, last_row, last_col)
+
+    # Закрываем writer
     writer.close()
 
 
@@ -130,8 +188,11 @@ def main():
     sector = 'Sector'
     df = get_dataframe_with_patents()
     df[wc] = count_words(df)
-    df[sector] = [identify_sector(row[wc]) for i, row in df.iterrows()]
-    write_df_to_xlsx(df)
+    for i in df[wc]:
+        print("-------------SEPARATION---------------")
+        print(i)
+    df.insert(loc=0, column=sector, value=[identify_sector(dict(row[wc])) for i, row in df.iterrows()])
+    write_to_excel(df)
 
 
 if __name__ == '__main__':

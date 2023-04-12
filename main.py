@@ -1,4 +1,7 @@
+import datetime
+import json
 import os
+import time
 from multiprocessing import freeze_support
 
 import pandas as pd
@@ -16,32 +19,42 @@ gy = 'гу'
 jy = 'жу'
 nd = 'н/о'
 
+company = 'Exxon'
 
 from revChatGPT.V1 import Chatbot
 
-def define_sector_by_chatGPT(patent_text):
+
+def define_sector_by_chat(patent_text):
     chatbot = Chatbot(config={
-        "email": "cucumento2@gmail.com",
-        "password": "Nebraska77778888__"
+        "access_token": os.environ.get('access_token'),
     })
     for data in chatbot.ask(
-            f"""{rik} - рецептуростроение и компунды
-                {tiv} - трубы и волокна
-                {gy} - гибкая упаковка
-                {jy} - жёсткая упаковка
-                {nd} - не определено, другая тема
-                
-                Есть 4 темы + отдельная 'неопределено'. 
-                Ниже представлен текст патента. Определи к какой теме относится тема данного патента. Ответь только буквами (rik, tiv, gy, jy, no). и только. Больше ничего отвечать не нужно.
-                Ещё раз: только несколько букв, которые маркируют тему, не более.
-                
-                Текст:
-                
-                {patent_text}""",
-        conversation_id="80c17a80-cc42-4d18-8ba9-81a4cb082d1d"
+            f"""
+            Ниже представлен текст патента. Определи к какой теме относится тема данного патента.
+            Тему, пожалуйста, определи подробно.
+            Так же дай подборное описание патента. 
+            Ответ следует вернуть в формате json со следующими полями:
+            Ответ на русском. По возможности.
+            
+            "sector": "Слово обозначающее тему",
+            "description": "подробное описание патента"
+            
+            Желательные темы: гели, пленки, жесткая упаковка, полимерные трубы, полимерные волокна, рецептуры полимерных смесей, полимерные компаунды.
+            Однако, если считаешь что ни одна из тем не подходит, давай определение темы на собственное усмотрение. 
+            Можно выбрать несколько тем, если это уместно.
+            Перечисление тем через запятую.
+            Больше никаких дополнительных пояснений не нужно. Только json в заданном выше формате.
+
+            Текст:
+            
+            {patent_text}
+            
+             Напоминаю - только json. Никакого пояснения быть не должно. Это очень важно.
+            """,
+            conversation_id="257d145b-9444-4eca-96ad-e9f0d2be9b6a"
+
     ):
-        message = data["message"][len(prev_text) :]
-        prev_text = data["message"]
+        message = data["message"]
     return message
 
 
@@ -55,14 +68,16 @@ def process_text(text):
     meaningful_tokens = [token for token in tokens if token not in stop_words and len(token) > 2]
     return meaningful_tokens
 
+
 # Функция для чтения файла и преобразования его в словарь
 def read_file(filename):
-    df = pd.read_excel(filename)
+    df = pd.read_excel(filename, engine='openpyxl')
     return df.to_dict('records')
 
+
 def get_dataframe_with_patents():
-    directory = 'patent_unloadings'
-    all_files = ['Sinopec.xlsx']#os.listdir(directory)
+    directory = 'ready_patents'
+    all_files = [f"{company}.xlsx"]  # os.listdir(directory)
 
     # Чтение всех файлов с расширением xlsx и преобразование их в словари
     data = []
@@ -93,10 +108,13 @@ def write_to_excel(df, filename="patents.xlsx"):
     # Создаем writer и engine
     writer = pd.ExcelWriter(filename, engine='xlsxwriter')
 
-    # Записываем df в excel
-    df.to_excel(writer, sheet_name='Sheet1', index=False)
+    df = df[['Section', 'Description', 'Publication numbers',
+             'Current assignees', 'Priority dates', 'Title',
+             'Abstract', 'Claims',
+             'Legal status (Pending, Granted, Revoked, Expired, Lapsed)', 'Advantages / Previous drawbacks',
+             'Independent claims', 'Object of invention', 'Keywords in context']]
     workbook = writer.book
-    worksheet = writer.sheets['Sheet1']
+    worksheet = workbook.add_worksheet('Sheet1')
 
     # Форматирование заголовка
     header_format = workbook.add_format({
@@ -113,7 +131,6 @@ def write_to_excel(df, filename="patents.xlsx"):
         worksheet.write(0, col_num, value, header_format)
         worksheet.set_column(col_num, col_num, 70)
 
-
     # Форматирование клеток с данными
     cell_format = workbook.add_format({
         'valign': 'top',
@@ -129,6 +146,7 @@ def write_to_excel(df, filename="patents.xlsx"):
             worksheet.set_column(col_num, col_num, 80)
             worksheet.set_row(row_num, 150)
 
+    print("Saving")
     last_row = len(df.index)
     last_col = len(df.columns) - 1
     worksheet.autofilter(0, 0, last_row, last_col)
@@ -167,6 +185,7 @@ def calculate_sector_tokens(patent_tokens: dict) -> dict:
 
     return tokens_sector_counter
 
+
 def identify_sector(patent_tokens: dict) -> str:
     """
     Identify the most likely sector for a given patent.
@@ -184,15 +203,46 @@ def identify_sector(patent_tokens: dict) -> str:
 
 
 def main():
-    wc = 'Word Counts'
+    start_time = time.time()
+    description = 'Description'
     sector = 'Sector'
     df = get_dataframe_with_patents()
-    df[wc] = count_words(df)
-    for i in df[wc]:
-        print("-------------SEPARATION---------------")
-        print(i)
-    df.insert(loc=0, column=sector, value=[identify_sector(dict(row[wc])) for i, row in df.iterrows()])
-    write_to_excel(df)
+    # Проверяем, есть ли колонки 'Section' и 'Description' в DataFrame
+    has_section = 'Section' in df.columns
+    has_description = 'Description' in df.columns
+
+    # Если колонок нет, то создаем их
+    if not has_section:
+        df['Section'] = ''
+
+    if not has_description:
+        df['Description'] = ''
+
+    # Обрабатываем только пустые ячейки в колонках 'Section' и 'Description'
+    for i, row in df.iterrows():
+        if has_section and pd.notna(row['Section']):
+            continue
+        if has_description and pd.notna(row['Description']):
+            continue
+
+        text = row['Title'] + ' ' + row['Abstract'] + '' + row['Claims']
+        while True:
+            try:
+                chat_dict_answer = json.loads(define_sector_by_chat(text[:7000]))
+            except json.decoder.JSONDecodeError:
+                continue
+            break
+        df.at[i, 'Section'] = chat_dict_answer['sector']
+        df.at[i, 'Description'] = chat_dict_answer['description']
+        print(row['Title'])
+        print(chat_dict_answer)
+
+        # Сохраняем результаты в файл каждые 5 строк
+        if (i + 1) % 1 == 0:
+            write_to_excel(df, filename=f'ready_patents/{company}.xlsx')
+
+    write_to_excel(df, filename=f'ready_patents/{company}.xlsx')
+    print("--- %s seconds ---" % (time.time() - start_time))
 
 
 if __name__ == '__main__':
